@@ -1,6 +1,7 @@
 #pragma once
 #include "pch.h"
 
+#define DLL_API __declspec(dllexport)
 
 #include <winrt/Windows.Graphics.Capture.h>
 #include <windows.graphics.capture.interop.h>
@@ -24,28 +25,11 @@ inline auto CreateD2DDevice(winrt::com_ptr<ID2D1Factory1> const& factory, winrt:
     return result;
 }
 
-/*
-class CaptureSnapshot
-{
+class DLL_API WGCapturer {
 public:
-    static wil::task<winrt::com_ptr<ID3D11Texture2D>>
-        TakeAsync(
-            winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice const& device,
-            winrt::Windows::Graphics::Capture::GraphicsCaptureItem const& item,
-            winrt::Windows::Graphics::DirectX::DirectXPixelFormat const& format = winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized);
+    WGCapturer(HWND hwnd);
 
-
-private:
-    CaptureSnapshot() = delete;
-};
-*/
-
-
-class WgcFrameGrabber {
-public:
-    WgcFrameGrabber(HWND hwnd);
-
-    ~WgcFrameGrabber() {
+    ~WGCapturer() {
         try {
             m_session.Close();
             m_framePool.Close();
@@ -53,9 +37,8 @@ public:
         catch (...) {}
     }
 
-    // 主动获取一帧截图（带超时轮询）
-    winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame CaptureFrame();
-    cv::Mat frameToCv(winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame& frame);
+    std::vector<cv::Mat> capture(const std::vector<std::tuple<int, int, int, int>>& regions);
+    void setTargetRegion(int left, int top, int width, int height);
 
 private:
     HWND hwnd;
@@ -66,6 +49,14 @@ private:
 
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool m_framePool{ nullptr };
     winrt::Windows::Graphics::Capture::GraphicsCaptureSession m_session{ nullptr };
+
+
+    winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame CaptureFrame();
+    cv::Mat frameToCv(winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame& frame);
+
+    std::mutex mutex_;
+    bool crop;
+    int Left, Top, Width, Height;
 };
 
 

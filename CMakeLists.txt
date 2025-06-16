@@ -13,3 +13,4 @@ project ("WGCapturer")
 
 # 包含子项目。
 add_subdirectory ("WGCapturer")
+add_subdirectory ("tester")

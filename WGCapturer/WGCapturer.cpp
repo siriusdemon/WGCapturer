@@ -50,68 +50,16 @@ winrt::com_ptr<ID3D11Texture2D> CopyD3DTexture(
 }
 
 
-/*
-wil::task<winrt::com_ptr<ID3D11Texture2D>>
-CaptureSnapshot::TakeAsync(winrt::IDirect3DDevice const& device, winrt::GraphicsCaptureItem const& item, winrt::DirectXPixelFormat const& pixelFormat)
-{
-    // Grab the apartment context so we can return to it.
-    std::cout << "start capture" << std::endl;
-    winrt::apartment_context context;
 
-    std::cout << "get dxgi interface " << std::endl;
-    auto d3dDevice = GetDXGIInterfaceFromObject<ID3D11Device>(device);
-    winrt::com_ptr<ID3D11DeviceContext> d3dContext;
-    std::cout << "get immediate context " << std::endl;
-    d3dDevice->GetImmediateContext(d3dContext.put());
-
-    // Creating our frame pool with CreateFreeThreaded means that we 
-    // will be called back from the frame pool's internal worker thread
-    // instead of the thread we are currently on. It also disables the
-    // DispatcherQueue requirement.
-    std::cout << "frame pool" << std::endl;
-    auto framePool = winrt::Direct3D11CaptureFramePool::CreateFreeThreaded(
-        device,
-        pixelFormat,
-        1,
-        item.Size());
-    std::cout << "capturesession" << std::endl;
-    auto session = framePool.CreateCaptureSession(item);
-
-    wil::shared_event captureEvent(wil::EventOptions::ManualReset);
-    winrt::Direct3D11CaptureFrame frame{ nullptr };
-    framePool.FrameArrived([&frame, captureEvent](auto& framePool, auto&)
-        {
-            frame = framePool.TryGetNextFrame();
-
-            // Complete the operation
-            captureEvent.SetEvent();
-        });
-
-    std::cout << "start catpure" << std::endl;
-    session.StartCapture();
-    co_await winrt::resume_on_signal(captureEvent.get());
-    co_await context;
-
-    // End the capture
-    session.Close();
-    framePool.Close();
-    std::cout << "finish catpure" << std::endl;
-
-    auto texture = GetDXGIInterfaceFromSurface<ID3D11Texture2D>(frame.Surface());
-    auto result = CopyD3DTexture(d3dDevice.get(), texture.get(), true);
-
-    co_return result;
-}
-*/
-
-cv::Mat WgcFrameGrabber::frameToCv(winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame& frame) {
+cv::Mat WGCapturer::frameToCv(winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame& frame) {
     auto texture = GetDXGIInterfaceFromSurface<ID3D11Texture2D>(frame.Surface());
     auto result = CopyD3DTexture(d3dDevice.get(), texture.get(), true);
 
     return Texture2Mat(d3dDevice.get(), result.get());
 }
 
-WgcFrameGrabber::WgcFrameGrabber(HWND hwnd) {
+WGCapturer::WGCapturer(HWND hwnd) {
+    winrt::init_apartment();
     this->hwnd = hwnd;
     this->m_item = CreateCaptureItemForWindow(hwnd);
     this->d3dDevice = CreateD3D11Device();
@@ -120,21 +68,67 @@ WgcFrameGrabber::WgcFrameGrabber(HWND hwnd) {
     this->m_format = winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized;
 
     m_framePool = winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool::Create(
-        m_device, m_format, 1, m_item.Size());
+        m_device, m_format, 2, m_item.Size());
 
     m_session = m_framePool.CreateCaptureSession(m_item);
     m_session.StartCapture();
-    std::cout << "Start catpure\n";
+    this->crop = false;
 }
 
-winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame WgcFrameGrabber::CaptureFrame() {
+winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame WGCapturer::CaptureFrame() {
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame frame{ nullptr };
     for (int i = 0; i < 10; i++) {
         frame = m_framePool.TryGetNextFrame();
         if (frame) {
             break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     return frame;
+}
+
+
+void WGCapturer::setTargetRegion(int left, int top, int width, int height) {
+    this->crop = true;
+    this->Left = left;
+    this->Top = top;
+    this->Width = width;
+    this->Height = height;
+
+}
+
+std::vector<cv::Mat> WGCapturer::capture(const std::vector<std::tuple<int, int, int, int>>& regions) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto frame = this->CaptureFrame();
+    auto mat = this->frameToCv(frame);
+    frame = nullptr; // drop  it
+
+    // crop before return any region to align with gdi method's region
+    if (crop) {
+        cv::Rect roi(this->Left, this->Top, this->Width, this->Height);
+        mat = mat(roi);
+    }
+
+    int width = mat.cols;
+    int height = mat.rows;
+    
+
+    std::vector<cv::Mat> results;
+    // convert region data
+    if (!regions.empty()) {
+        for (auto& region : regions) {
+            auto& [left, top, right, bottom] = region;
+            if (left < 0 || top < 0 || right > width || bottom > height || right <= left || bottom <= top) {
+                std::cout << "Region out of bounds: [" << left << ", " << top << ", " << right << ", " << bottom << "]" << std::endl;
+                results.push_back(cv::Mat());
+                return results;
+            }
+            cv::Rect roi(left, top, right - left, bottom - top);
+            cv::Mat resultMat = mat(roi);
+            results.push_back(std::move(resultMat));
+        }
+    }
+    // convert all data
+    results.push_back(std::move(mat));
+    return results;
 }

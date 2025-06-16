@@ -1,14 +1,11 @@
 #pragma once
 
-// Collision from minwindef min/max and std
-#define NOMINMAX 
 
 // Windows SDK support
 #include <Unknwn.h>
 #include <inspectable.h>
 
 // Needs to come before C++/WinRT headers
-#include "wil/cppwinrt.h"
 
 // WinRT
 #include <winrt/Windows.Foundation.h>
@@ -40,7 +37,3 @@
 // DWM
 #include <dwmapi.h>
 
-// WIL
-#include "wil/resource.h"
-#include "wil/cppwinrt_helpers.h"
-#include "wil/coroutine.h"
